@@ -138,7 +138,7 @@ class BasePeer:
         message_queues = {}
 
         while self._is_handle_recv:
-            print('\n[*] Waiting for the next event')
+            LOGGER.info('\n[*] Waiting for the next event')
             readable, writable, exceptional = select.select(inputs, outputs,
                                                             inputs, 2)
             self._process_readable_sock(inputs, outputs,
@@ -152,7 +152,7 @@ class BasePeer:
         for sock in readable:
             if sock is self._recv_sock:
                 conn, addr = sock.accept()
-                print('[*] New connection from %s' % str(addr))
+                LOGGER.info('[*] New connection from %s' % str(addr))
                 conn.setblocking(0)
                 inputs.append(conn)
                 message_queues[conn] = {'out': False, 'data': b''}
@@ -160,7 +160,7 @@ class BasePeer:
             else:
                 data = sock.recv(BUFFER_SIZE)
                 if data:
-                    print('[+] Received {} from {}'
+                    LOGGER.info('[+] Received {} from {}'
                                 .format(repr(data.decode()), str(sock.getpeername())))
                     message_queues[sock]['data'] += data
                     if sock not in outputs:
@@ -170,7 +170,7 @@ class BasePeer:
                         req = message_queues[sock]['data'].decode('utf-8')
                         message_queues[sock]['data'] = self._process_request(req)
                 else:
-                    print('[+] Closing {} after reading no data'
+                    LOGGER.info('[+] Closing {} after reading no data'
                                 .format(str(sock.getpeername())))
                     if sock in outputs:
                         outputs.remove(sock)
@@ -187,14 +187,14 @@ class BasePeer:
         for sock in writable:
             next_msg = message_queues[sock]['data']
             if next_msg == b'':
-                print('[*] Output queue for {} is empty'
+                LOGGER.info('[*] Output queue for {} is empty'
                             .format(str(sock.getpeername())))
                 outputs.remove(sock)
             else:
                 if message_queues[sock]['out']:
                     message_queues[sock]['data'] = b''
                     message_queues[sock]['out'] = False
-                    print('[*] Sending {} to {}'
+                    LOGGER.info('[*] Sending {} to {}'
                                 .format(repr(next_msg.decode()),
                                         str(sock.getpeername())))
                     sock.send(next_msg)
