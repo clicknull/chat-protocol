@@ -86,7 +86,7 @@ class BasePeer:
 
     def disconnect(self):
         '''
-        Disconnect from the chat. Send all users that we
+        Disconnect from the chat. Send to all users that we
         are disconnecting
         '''
         pass
