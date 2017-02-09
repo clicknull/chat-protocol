@@ -1,17 +1,19 @@
 '''
-There is placed base class for peer
+There is placed BasePeer class. It provides base functionality
+of every peer-to-peer network.
 
 Vars:
     INTERFACES (list) List of Unix network interfaces
     BUFFER_SIZE (int) Size of receiving socket buffer
 '''
 
-
+import os
 import socket
 import select
 import logging
 import time
 import threading
+import netifaces as nf
 
 from queue import Queue
 
@@ -33,6 +35,8 @@ class BasePeer:
         _recv_sock (socket) Socket for receiving messages
         _opened_connection (dict) Matching between a host and
                                   socket with connection to a host
+        _host (tuple) Tuple of IP and port of current machine
+        _connected (set) Set of hosts that are connected to the chat
     '''
 
     def __init__(self, port):
@@ -42,20 +46,25 @@ class BasePeer:
 
         self._init_threading_data()
 
+        self._host = (self._fetch_IP_address(), port)
+        self._connected = set()
+
+        # Add current host in set of connected hosts
+        self.add_host(self._host)
+
     def _init_threading_data(self):
         self._inner_workers = {}
         self._is_handle_recv = True
 
-    def start(self):
-        ''' Start peer's works and processing data '''
-        self.add_work(self._handle_recv)
-
-    def add_work(self, work):
+    def _add_work(self, work):
         ''' Run work in a new thread '''
 
         thread = threading.Thread(target=work)
         self._inner_workers[work.__name__] = thread
         thread.start()
+
+    def _add_host(self, host):
+        self._connected.add(host)
 
     def _create_send_socket(self):
         ''' Create socket for sending messages '''
@@ -73,23 +82,6 @@ class BasePeer:
         recv.listen(5)
         recv.setblocking(0)
         return recv
-
-    def connect(self, server_host):
-        '''
-        Connect to the chat
-
-        Args:
-            server_host (tuple) IP and port of a host that will
-                                handle our request for connection
-        '''
-        pass
-
-    def disconnect(self):
-        '''
-        Disconnect from the chat. Send to all users that we
-        are disconnecting
-        '''
-        pass
 
     def _open_connection(self, host):
         '''
@@ -124,11 +116,12 @@ class BasePeer:
         if host not in self._opened_connection:
             if not self._open_connection(host):
                 return False
-
-        send_sock = self._opened_connection[host]
-        send_sock.send(msg.encode())
-
-        return True
+        try:
+            send_sock = self._opened_connection[host]
+            send_sock.send(json.dumps(msg).encode())
+            return True
+        except KeyError as e:
+            return False
 
     def _handle_recv(self):
         ''' Non-blocking handling of received data '''
@@ -199,15 +192,15 @@ class BasePeer:
                                         str(sock.getpeername())))
                     sock.send(next_msg)
 
-    def _process_request(self, request):
-        '''
-        Process request from another client. First of all we
-        should decrypt message via encryptor.
-
-        Args:
-            request (string) Request from some client in the chat
-        Return:
-            (bytes) Response to request
-        '''
-
-        # TODO REQUEST PROCESSING
+    def _fetch_IP_address(self):
+        os_name = os.name
+        for glob_if in nf.interfaces():
+            try:
+                address = nf.ifaddresses(glob_if)[2][0]['addr']
+                if os_name == 'nt':
+                    return address
+                for loc_of in INTERFACES:
+                    if glob_if.startswith(loc_of):
+                        return address
+            except KeyError:
+                pass
