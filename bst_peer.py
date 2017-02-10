@@ -8,19 +8,23 @@ import socket
 import logging
 import json
 
-from base_peer import BasePeer
+from base_peer import BasePeer, END_OF_MESSAGE
 from handlers import Handlers
+
+from random import randint
 
 
 LOGGER = logging.getLogger(__name__)
+DOWN = int(1e10)
+UP = int(9e10)
 
 
 class BinaryTreePeer(BasePeer):
     def __init__(self, port, server_host=None):
-        super().__init__(self, port)
+        super().__init__(port)
 
         self._server_host = server_host
-        self._id = None
+        self._create_handlers()
 
         # Attributes of node
         self._left = None
@@ -30,19 +34,41 @@ class BinaryTreePeer(BasePeer):
         # "left" or "right" node towards to parent node
         self._cur_pos = None
 
+        self._init_data()
+
+    def _init_data(self):
+        self.connected = {}
+        self.id2host = {}
+
+        # Client attributes
+        self._id = None
+        self.username = None
+
+    def _add_host(self, host, data):
+        self.connected[host] = data
+
+    def _get_self_data(self):
+        return {'id': self._id, 'username': ''}
+
     def start(self):
         ''' Start peer's works and processing data '''
 
-        self._add_work(self._handle_recv)
-
         # If we want to connect to existed chat
         if self._server_host is not None:
-            self._get_chat_info(self._server_host)
-            self._fill_node_data()
-            self.connect(self._server_host)
+            self._greeting()
+        else:
+            self._id = self.generate_id([])
+            # TODO ADD USERNAME
+            self._add_host(self._host, self._get_self_data())
+        self._add_work(self._handle_recv)
 
     def _form_broadcast_field(self, side):
         return {'side': side}
+
+    def _greeting(self):
+        self._get_chat_info(self._server_host)
+        self._wait_node_data()
+        # self.connect(self._server_host)
 
     def _create_handlers(self):
         self._handlers = Handlers(self)
@@ -87,8 +113,8 @@ class BinaryTreePeer(BasePeer):
                                 handle our request for connection
         '''
 
-        LOGGER.info('[*] Connecting to: %s' % str(server_host))
-        packet = self._create_packet(_type='connect', -1, 1, self._host,
+        print('[*] Connecting to: %s' % str(server_host))
+        packet = self._create_packet('connect', -1, -1, self._host,
                                      server_host)
         self.send_message(server_host, packet)
 
@@ -107,16 +133,22 @@ class BinaryTreePeer(BasePeer):
         Args:
             server_host (tuple) IP and port of a server host
         '''
-        packet = self._create_packet(_type='get_chat_info', -1, -1,
+        packet = self._create_packet('get_chat_info', -1, -1,
                                      self._host, server_host)
-        self.send_message(server_host, packet)
+        response = json.loads(self._send_greet(server_host, packet).decode())
+        print('[+] Received: %s from %s' % (response, response['from_host']))
+        self._handlers[response['type']].handle(response)
 
-    def _fill_node_data(self):
-        '''
-        Fill node's data, namely id.
-        '''
-        pass
+    def _wait_node_data(self):
+        ''' Wait for assignment of id '''
+        while self._id is None:
+            pass
 
+    def generate_id(self, ids):
+        while True:
+            _id = randint(DOWN, UP)
+            if _id not in ids:
+                return _id
 
     def _process_request(self, request):
         '''
@@ -132,4 +164,7 @@ class BinaryTreePeer(BasePeer):
         packet = json.loads(request)
 
         # All payload are placed in Handlers class
-        return self._handlers[packet['type']].handle(packet)
+        resp_packet = self._handlers[packet['type']].handle(packet)
+        if resp_packet is None:
+            resp_packet = ''
+        return  json.dumps(resp_packet).encode() + END_OF_MESSAGE

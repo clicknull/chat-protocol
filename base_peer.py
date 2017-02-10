@@ -14,6 +14,8 @@ import logging
 import time
 import threading
 import netifaces as nf
+import json
+import traceback
 
 from queue import Queue
 
@@ -36,7 +38,7 @@ class BasePeer:
         _opened_connection (dict) Matching between a host and
                                   socket with connection to a host
         _host (tuple) Tuple of IP and port of current machine
-        _connected (set) Set of hosts that are connected to the chat
+        connected (set) Set of hosts that are connected to the chat
     '''
 
     def __init__(self, port):
@@ -47,10 +49,6 @@ class BasePeer:
         self._init_threading_data()
 
         self._host = (self._fetch_IP_address(), port)
-        self._connected = set()
-
-        # Add current host in set of connected hosts
-        self.add_host(self._host)
 
     def _init_threading_data(self):
         self._inner_workers = {}
@@ -62,9 +60,6 @@ class BasePeer:
         thread = threading.Thread(target=work)
         self._inner_workers[work.__name__] = thread
         thread.start()
-
-    def _add_host(self, host):
-        self._connected.add(host)
 
     def _create_send_socket(self):
         ''' Create socket for sending messages '''
@@ -118,10 +113,28 @@ class BasePeer:
                 return False
         try:
             send_sock = self._opened_connection[host]
-            send_sock.send(json.dumps(msg).encode())
+            send_sock.sendall(json.dumps(msg).encode())
             return True
-        except KeyError as e:
+        except (socket.error, KeyError) as e:
             return False
+
+    def _send_greet(self, host, msg):
+        '''
+        We want to get information about the chat then we should use
+        temp socket to transfer message
+
+        Return:
+            (str) Chat information
+        '''
+
+        greet_sock = self._create_send_socket()
+        greet_sock.connect(host)
+        greet_sock.sendall(json.dumps(msg).encode() + END_OF_MESSAGE)
+
+        data = greet_sock.recv(BUFFER_SIZE * 2)
+
+        greet_sock.close()
+        return data
 
     def _handle_recv(self):
         ''' Non-blocking handling of received data '''
@@ -131,7 +144,7 @@ class BasePeer:
         message_queues = {}
 
         while self._is_handle_recv:
-            LOGGER.info('\n[*] Waiting for the next event')
+            print('\n[*] Waiting for the next event')
             readable, writable, exceptional = select.select(inputs, outputs,
                                                             inputs, 2)
             self._process_readable_sock(inputs, outputs,
@@ -145,7 +158,7 @@ class BasePeer:
         for sock in readable:
             if sock is self._recv_sock:
                 conn, addr = sock.accept()
-                LOGGER.info('[*] New connection from %s' % str(addr))
+                print('[*] New connection from %s' % str(addr))
                 conn.setblocking(0)
                 inputs.append(conn)
                 message_queues[conn] = {'out': False, 'data': b''}
@@ -153,7 +166,7 @@ class BasePeer:
             else:
                 data = sock.recv(BUFFER_SIZE)
                 if data:
-                    LOGGER.info('[+] Received {} from {}'
+                    print('[+] Received {} from {}'
                                 .format(repr(data.decode()), str(sock.getpeername())))
                     message_queues[sock]['data'] += data
                     if sock not in outputs:
@@ -163,7 +176,7 @@ class BasePeer:
                         req = message_queues[sock]['data'].decode('utf-8')
                         message_queues[sock]['data'] = self._process_request(req)
                 else:
-                    LOGGER.info('[+] Closing {} after reading no data'
+                    print('[+] Closing {} after reading no data'
                                 .format(str(sock.getpeername())))
                     if sock in outputs:
                         outputs.remove(sock)
@@ -179,15 +192,15 @@ class BasePeer:
 
         for sock in writable:
             next_msg = message_queues[sock]['data']
-            if next_msg == b'':
-                LOGGER.info('[*] Output queue for {} is empty'
+            if next_msg in [b'', END_OF_MESSAGE]:
+                print('[*] Output queue for {} is empty'
                             .format(str(sock.getpeername())))
                 outputs.remove(sock)
             else:
                 if message_queues[sock]['out']:
                     message_queues[sock]['data'] = b''
                     message_queues[sock]['out'] = False
-                    LOGGER.info('[*] Sending {} to {}'
+                    print('[*] Sending {} to {}'
                                 .format(repr(next_msg.decode()),
                                         str(sock.getpeername())))
                     sock.send(next_msg)
