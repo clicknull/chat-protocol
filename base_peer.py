@@ -132,6 +132,7 @@ class BasePeer:
 
         for msg in [get_info_msg, find_place_msg]:
             greet_sock.sendall(json.dumps(get_info_msg).encode() + END_OF_MESSAGE)
+            # TODO CORRECT RECEIVING PART
             data = greet_sock.recv(BUFFER_SIZE * 2)
             print('[+] Received: %s from %s' % (data, data['from_host']))
             yield data

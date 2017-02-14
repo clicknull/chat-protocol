@@ -73,10 +73,21 @@ class BinaryTreePeer(BasePeer):
         return {'side': side}
 
     def _greeting(self):
-        self._get_chat_info(self._server_host)
-        self._wait_node_data()
-        self._find_insert_place(self._server_host)
+        '''
+        Make get_chat_info and find_insert_place requests to a server_host
 
+        First, it generates two packet. By one on each request.
+        Then gets generator and iterates through responses
+        '''
+
+        get_chat_packet = self._get_chat_info(self._server_host)
+        find_place_packet = self._find_insert_place(self._server_host)
+        generator = self.__fetch_and_process_greet(get_chat_packet,
+                                                   find_place_packet)
+
+        for response in generator:
+            self._handlers[response['type']].handle(response)
+            self._wait_node_data()
 
     def _create_handlers(self):
         self._handlers = Handlers(self)
@@ -133,32 +144,27 @@ class BinaryTreePeer(BasePeer):
         '''
         pass
 
-    def __fetch_and_process_greet(self, _type, from_id, to_id, from_host,
-                                  to_host, broadcast=None):
-        packet = self._create_packet(_type, from_id=from_id, to_id=to_id,
-                                     from_host=from_host, to_host=to_host,
-                                     broadcast=broadcast)
-        response = json.loads(self._send_greet(to_host, packet).decode())
-        self._handlers[response['type']].handle(response)
+    def __fetch_and_process_greet(self, get_info_packet, find_place_packet):
+        response = json.loads(self._send_greet(to_host, get_info_packet,
+                                               find_place_packet).decode())
+        return response
 
     def _get_chat_info(self, server_host):
         '''
         Get chat information. Namely, list of connected hosts, their ids
         and so on.
         '''
-        print('[*] Sending get_chat_information request to %s' % server_host)
-        self.__fetch_and_process_greet(TYPES['get_chat_info'], -1, -1,
-                                       self._host, server_host)
+        return self._create_packet(TYPES['get_chat_info'], -1, -1,
+                                  self._host, server_host)
 
     def _find_insert_place(self, server_host):
         '''
         Fetch information about host that can process out connection to
         the chat
         '''
-        print('[*] Sending find_insert_place request to %s' % server_host)
-        self.__fetch_and_process_greet(TYPES['find_insert_place'], self._id,
-                                       self.connected[server_host]['id'],
-                                       self._host, server_host)
+        return self._create_packet(TYPES['find_insert_place'], self._id,
+                                   self.connected[server_host]['id'],
+                                   self._host, server_host)
 
     def _wait_node_data(self):
         ''' Wait for assignment of id '''
