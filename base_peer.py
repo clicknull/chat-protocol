@@ -102,7 +102,7 @@ class BasePeer:
 
         Args:
             host (tuple) Tuple of IP and port of a host
-            msg (str) Message that is sended
+            msg (dict) Message that is sended
 
         Return:
             (bool) True if transfer was successful else False
@@ -118,7 +118,7 @@ class BasePeer:
         except (socket.error, KeyError) as e:
             return False
 
-    def _send_greet(self, host, msg):
+    def _send_greet(self, host, get_info_msg, find_place_msg):
         '''
         We want to get information about the chat then we should use
         temp socket to transfer message
@@ -129,12 +129,13 @@ class BasePeer:
 
         greet_sock = self._create_send_socket()
         greet_sock.connect(host)
-        greet_sock.sendall(json.dumps(msg).encode() + END_OF_MESSAGE)
 
-        data = greet_sock.recv(BUFFER_SIZE * 2)
-
+        for msg in [get_info_msg, find_place_msg]:
+            greet_sock.sendall(json.dumps(get_info_msg).encode() + END_OF_MESSAGE)
+            data = greet_sock.recv(BUFFER_SIZE * 2)
+            print('[+] Received: %s from %s' % (data, data['from_host']))
+            yield data
         greet_sock.close()
-        return data
 
     def _handle_recv(self):
         ''' Non-blocking handling of received data '''
