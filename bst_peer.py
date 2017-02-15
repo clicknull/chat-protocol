@@ -18,6 +18,7 @@ LOGGER = logging.getLogger(__name__)
 DOWN = int(1e10)
 UP = int(9e10)
 INF = 1e11
+SUCCESS_CONN = 'OK'
 
 
 class BinaryTreePeer(BasePeer):
@@ -62,6 +63,7 @@ class BinaryTreePeer(BasePeer):
         # If we want to connect to existed chat
         if self._server_host is not None:
             self._greeting()
+            self.connect(self._parent)
         else:
             self._id = self.generate_id([])
             self._is_root = True
@@ -89,6 +91,47 @@ class BinaryTreePeer(BasePeer):
         self._wait_node_data()
         self._find_insert_place(self._server_host, greet_sock)
 
+        greet_sock.close()
+
+    def connect(self, server_id):
+        '''
+        Connect to the chat.
+
+        Args:
+            server_host (tuple) IP and port of a host that will
+                                handle our request for connection
+        '''
+
+        server_host = self.id2host[server_id]
+
+        packet = self._create_packet(TYPES['connect'], -1, -1, self._host,
+                                     server_host, connect=True)
+        while True:
+            print('[*] Connecting to %s\n' % str(server_host))
+            sock = self._send_temp_message(server_host, packet)
+            resp = self.__process_resp_sock(sock)
+            if resp['response'] != SUCCESS_CONN:
+                print('[-] Unsuccessful connecting. Trying to find another '
+                      'insertion place in chat\n')
+                self._close_connection(server_host)
+                self._find_insert_place(self._server_host)
+            else:
+                print('[+] Connection with %s is established'
+                      % str(server_host))
+                self._handlers['chat_info'].handle(resp)
+                break
+
+    def disconnect(self):
+        '''
+        Disconnect from the chat. Send to all users that we
+        are disconnecting.
+        '''
+        pass
+
+    def _inform_about_connected(self, host):
+        ''' Inform other clients of chat that user was connected '''
+        pass
+
     def __fetch_and_process_greet(self, packet, server_host, print_msg,
                                   sock=None):
             if sock is None:
@@ -96,8 +139,11 @@ class BinaryTreePeer(BasePeer):
                 sock.connect(server_host)
             print(print_msg)
             sock.sendall(json.dumps(packet).encode() + END_OF_MESSAGE)
-            resp = self._get_response(sock)
-            return self._handle_resp_by_type(resp)
+            return self.__process_resp_sock(sock)
+
+    def __process_resp_sock(self, sock):
+        resp = self._get_response(sock)
+        return self._handle_resp_by_type(resp)
 
     def _get_chat_info(self, server_host, sock=None):
         '''
@@ -132,7 +178,7 @@ class BinaryTreePeer(BasePeer):
         self._handlers = Handlers(self)
 
     def _create_packet(self, _type, from_id, to_id, from_host, to_host,
-                       broadcast=None):
+                       broadcast=None, connect=False):
         '''
         Form a chat packet.
 
@@ -160,6 +206,10 @@ class BinaryTreePeer(BasePeer):
         }
         if broadcast:
             packet['broadcast'] = broadcast
+        if connect:
+            packet['place_info'] = self._place_info
+            packet['user_info'] = {'id': self._id, 'host': self._host,
+                                   'username': ''}
         return packet
 
     def send_message(self, host, msg):
@@ -195,27 +245,6 @@ class BinaryTreePeer(BasePeer):
         except socket.error as e:
             # TODO PROCESS THIS CASE CORRECTLY
             return False
-
-    def connect(self, server_host):
-        '''
-        Connect to the chat.
-
-        Args:
-            server_host (tuple) IP and port of a host that will
-                                handle our request for connection
-        '''
-
-        # print('[*] Connecting to: %s' % str(server_host))
-        # packet = self._create_packet(TYPES['connect'], -1, -1, self._host,
-        #                              server_host)
-        # self.send_message(server_host, packet)
-
-    def disconnect(self):
-        '''
-        Disconnect from the chat. Send to all users that we
-        are disconnecting.
-        '''
-        pass
 
     def _process_request(self, request):
         '''

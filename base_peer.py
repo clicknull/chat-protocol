@@ -78,6 +78,20 @@ class BasePeer:
         recv.setblocking(0)
         return recv
 
+    def _send_temp_message(self, host, msg):
+        '''
+        Used when happens greeting
+        '''
+        if host not in self._opened_connection:
+            self._open_connection(host)
+        sock = self._opened_connection[host]
+        sock.sendall(json.dumps(msg).encode() + END_OF_MESSAGE)
+        return sock
+
+    def _close_connection(self, host):
+        self._opened_connection[host].close()
+        del self._opened_connection[host]
+
     def _open_connection(self, host):
         '''
         Open connection with a host

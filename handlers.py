@@ -22,7 +22,8 @@ TYPES = {
     'relay': 'relay',
     'find_insert_place': 'find_insert_place',
     'insert_place': 'insert_place',
-    'downtype': 'downtype'
+    'downtype': 'downtype',
+    'connect_resp': 'connect_resp'
 }
 
 
@@ -48,11 +49,42 @@ class Handlers:
             TYPES['chat_info']: Handle(self._chat_info),
             TYPES['relay']: Handle(self._relay),
             TYPES['find_insert_place']: Handle(self._find_insert_place),
-            TYPES['insert_place']: Handle(self._insert_place)
+            TYPES['insert_place']: Handle(self._insert_place),
+            TYPES['connect_resp']: Handle(self._connect_resp)
         }
 
     def _connect(self, rpacket):
-        pass
+        ''' Handle connection request '''
+
+        place_info = rpacket['place_info']
+        side = place_info['side']
+        user_info = rpacket['user_info']
+        is_successful = False
+        if side == 'left' and self._peer._left is None:
+            self._peer._left = user_info['id']
+            is_successful = True
+        elif side == 'right' and self._peer._right is None:
+            self._peer._right = user_info['id']
+            is_successful = True
+        else:
+            pass
+        packet = self._reverse_packet(rpacket, 'connect_resp')
+        if is_successful:
+            host = tuple(user_info['host'])
+            self._peer.connected[host] = user_info
+            print('[+] Added %s in connected hosts list\n' % str(host))
+
+            packet['response'] = 'OK'
+            packet['connected'] = self._get_connected()
+        else:
+            packet['response'] = 'ERROR'
+        del packet['user_info']
+        del packet['place_info']
+        return packet
+
+    def _connect_resp(self, rpacket):
+        ''' Empty function '''
+        return rpacket
 
     def _disconnect(self, rpacket):
         pass
@@ -70,15 +102,18 @@ class Handlers:
         packet = self._peer._create_packet('chat_info', self._peer._id,
                                            -1, rpacket['to_host'],
                                            rpacket['from_host'])
+        packet['connected'] = self._get_connected()
+
+        print('[+] get_chat_info: Created response packet: %s\n' % packet)
+        return packet
+
+    def _get_connected(self):
         connected = []
         for host, data in self._peer.connected.items():
             _data = copy.copy(data)
             _data['host'] = host
             connected.append(_data)
-        packet['connected'] = connected
-
-        print('[+] get_chat_info: Created response packet: %s\n' % packet)
-        return packet
+        return connected
 
     def _chat_info(self, rpacket):
         '''
@@ -97,9 +132,10 @@ class Handlers:
             self._peer.id2host[_id] = host
 
             ids.add(_id)
-        own_id = self._peer.generate_id(ids)
-        print('[+] Chosen id of current host: %d\n' % own_id)
-        self._peer._id = own_id
+        if self._peer._id is None:
+            own_id = self._peer.generate_id(ids)
+            print('[+] Chosen id of current host: %d\n' % own_id)
+            self._peer._id = own_id
 
     def _find_insert_place(self, rpacket, client_id=None, client_host=None,
                            relay=False):
@@ -179,13 +215,19 @@ class Handlers:
                  'low_bound': low_bound }
 
     def _reverse_packet(self, packet, _type):
-        return self._peer._create_packet(_type, packet['to_id'],
-                                         packet['from_id'], packet['to_host'],
-                                         packet['from_host'])
+        to_id = packet['to_id']
+        to_host = packet['to_host']
+        packet['type'] = _type
+
+        packet['to_id'], packet['to_host'] = packet['from_id'], packet['from_host']
+        packet['from_id'], packet['from_host'] = to_id, to_host
+
+        return packet
 
     def _insert_place(self, rpacket):
         ''' Process insert_place response '''
         place_info = rpacket['place_info']
+        self._peer._place_info = place_info
 
         parent = tuple(place_info['conn_host'])
 
