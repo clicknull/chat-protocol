@@ -96,48 +96,17 @@ class BasePeer:
         except socket.error as e:
             return False
 
-    def send_message(self, host, msg):
-        '''
-        Send message to a host in the chat.
-
-        Args:
-            host (tuple) Tuple of IP and port of a host
-            msg (dict) Message that is sended
-
-        Return:
-            (bool) True if transfer was successful else False
-        '''
-
-        if host not in self._opened_connection:
-            if not self._open_connection(host):
-                return False
-        try:
-            send_sock = self._opened_connection[host]
-            print('[*] Sending %s to %s' % (msg, str(host)))
-            send_sock.sendall(json.dumps(msg).encode())
-            return True
-        except (socket.error, KeyError) as e:
-            return False
-
-    def _send_greet(self, host, requests):
-        '''
-        We want to get information about the chat then we should use
-        temp socket to transfer message
-
-        Return:
-            (str) Chat information
-        '''
-
-        greet_sock = self._create_send_socket()
-        greet_sock.connect(host)
-
-        for msg in requests:
-            greet_sock.sendall(json.dumps(msg).encode() + END_OF_MESSAGE)
-            # TODO CORRECT RECEIVING PART
-            data = json.loads(greet_sock.recv(BUFFER_SIZE * 2).decode())
-            print('[+] Received: %s from %s' % (data, str(data['from_host'])))
-            yield data
-        greet_sock.close()
+    def _get_response(self, sock):
+        resp = ''
+        end_msg = END_OF_MESSAGE.decode()
+        while True:
+            data = sock.recv(BUFFER_SIZE).decode()
+            resp += data
+            if end_msg in data:
+                break
+        data = json.loads(resp)
+        print('[+] Received: %s from %s\n' % (data, str(data['from_host'])))
+        return data
 
     def _handle_recv(self):
         ''' Non-blocking handling of received data '''

@@ -77,7 +77,7 @@ class Handlers:
             connected.append(_data)
         packet['connected'] = connected
 
-        print('[+] get_chat_info: Created response packet: %s' % packet)
+        print('[+] get_chat_info: Created response packet: %s\n' % packet)
         return packet
 
     def _chat_info(self, rpacket):
@@ -86,7 +86,7 @@ class Handlers:
         '''
 
         ids = set()
-        print('[+] chat_info: Fetched list of connected hosts: {}'
+        print('[+] chat_info: Fetched list of connected hosts: {}\n'
               .format(rpacket['connected']))
         for host_data in rpacket['connected']:
             host = tuple(host_data['host'])
@@ -98,7 +98,7 @@ class Handlers:
 
             ids.add(_id)
         own_id = self._peer.generate_id(ids)
-        print('[+] Chosen id of current host: %d' % own_id)
+        print('[+] Chosen id of current host: %d\n' % own_id)
         self._peer._id = own_id
 
     def _find_insert_place(self, rpacket, client_id=None, client_host=None,
@@ -152,13 +152,9 @@ class Handlers:
         if node is None:
             place_info = self._form_place(child_side, neighbor,
                                           self._peer._host, up_bound, low_bound)
-            if child_side == 'left':
-                self._peer._left = client_id
-            else:
-                self._peer._right = client_id
             packet = self._reverse_packet(packet, TYPES['insert_place'])
             packet['place_info'] = place_info
-            print('[+] Finded node location: {} for {}'
+            print('[+] Finded node location: {} for {}\n'
                   .format(place_info, str(packet['from_host'])))
             return (True, packet)
         else:
@@ -172,6 +168,7 @@ class Handlers:
         packet['type'] = 'relay'
         packet['client_id'] = packet['from_id']
         packet['client_host'] = packet['from_host']
+
         self._relay(packet)
 
     def _form_place(self, side, neighbor, conn_host, up_bound, low_bound):
@@ -187,7 +184,16 @@ class Handlers:
                                          packet['from_host'])
 
     def _insert_place(self, rpacket):
-        pass
+        ''' Process insert_place response '''
+        place_info = rpacket['place_info']
+
+        parent = tuple(place_info['conn_host'])
+
+        self._peer.up_bound = place_info['up_bound']
+        self._peer.low_bound = place_info['low_bound']
+        self._peer._side = place_info['side']
+        self._peer._neighbor = place_info['neighbor']
+        self._peer._parent = self._peer.connected[parent]['id']
 
     def _relay(self, rpacket):
         '''
@@ -220,11 +226,13 @@ class Handlers:
                 host = self._peer._right
         else:
             host = self._peer._parent
+
         rpacket['from_host'] = self._peer._host
         rpacket['from_id'] = self._peer._id
         rpacket['to_host'] = host
         rpacket['to_id'] = self._peer.connected[host]['id']
-        print('[*] Relaying packet {} to {}'
+
+        print('[*] Relaying packet {} to {}\n'
               .format(rpacket, rpacket['to_host']))
         self._peer.send_message(host, rpacket)
 

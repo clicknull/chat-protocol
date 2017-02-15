@@ -38,7 +38,7 @@ class BinaryTreePeer(BasePeer):
 
         # "left" or "right" node towards to parent node
         self._side = None
-        self._neighbot = None
+        self._neighbor = None
 
         self._init_data()
 
@@ -82,26 +82,51 @@ class BinaryTreePeer(BasePeer):
         the chat
         '''
 
-        packets_gen = [self._get_chat_info, self._find_insert_place]
-        requests = []
+        greet_sock = self._create_send_socket()
+        greet_sock.connect(self._server_host)
 
-        greet_gen = self._send_greet(self._server_host, requests)
-        for gen in packets_gen:
-            requests.append(gen(self._server_host))
-            resp = next(greet_gen)
-            self._handlers[resp['type']].handle(resp)
-            self._wait_node_data()
+        self._get_chat_info(self._server_host, greet_sock)
+        self._wait_node_data()
+        self._find_insert_place(self._server_host, greet_sock)
 
-    def _get_chat_info(self, server_host):
-        ''' Generate get_chat_info request packet '''
-        return self._create_packet(TYPES['get_chat_info'], -1, -1,
-                                  self._host, server_host)
+    def __fetch_and_process_greet(self, packet, server_host, print_msg,
+                                  sock=None):
+            if sock is None:
+                sock = self._create_send_socket()
+                sock.connect(server_host)
+            print(print_msg)
+            sock.sendall(json.dumps(packet).encode() + END_OF_MESSAGE)
+            resp = self._get_response(sock)
+            return self._handle_resp_by_type(resp)
 
-    def _find_insert_place(self, server_host):
-        ''' Generate find_insert_place request packet '''
-        return self._create_packet(TYPES['find_insert_place'], self._id,
+    def _get_chat_info(self, server_host, sock=None):
+        '''
+        Get chat information. Namely, list of connected hosts, their ids
+        and so on.
+        '''
+        packet = self._create_packet(TYPES['get_chat_info'], -1, -1,
+                                     self._host, server_host)
+        print_msg = ('[*] Sending get_chat_information request {} to {}\n'
+                     .format(packet, str(server_host)))
+        return self.__fetch_and_process_greet(packet, server_host, print_msg,
+                                              sock)
+
+
+    def _find_insert_place(self, server_host, sock=None):
+        '''
+        Fetch information about host that can process out connection to
+        the chat
+        '''
+        packet = self._create_packet(TYPES['find_insert_place'], self._id,
                                    self.connected[server_host]['id'],
                                    self._host, server_host)
+        print_msg = ('[*] Sending find_insert_place request {} to {}\n'
+                     .format(packet, str(server_host)))
+        return self.__fetch_and_process_greet(packet, server_host,
+                                              print_msg, sock)
+
+    def _handle_resp_by_type(self, resp):
+        return self._handlers[resp['type']].handle(resp)
 
     def _create_handlers(self):
         self._handlers = Handlers(self)
@@ -136,6 +161,40 @@ class BinaryTreePeer(BasePeer):
         if broadcast:
             packet['broadcast'] = broadcast
         return packet
+
+    def send_message(self, host, msg):
+        '''
+        Send message to a host in the chat.
+
+        Args:
+            host (tuple) Tuple of IP and port of a host
+            msg (dict) Message that is sended
+
+        Return:
+            (bool) True if transfer was successful else False
+        '''
+
+        try:
+            host_id = self.connected[host]['id']
+
+            left = self.id2host[self._left]
+            right = self.id2host[self._right]
+            parent = self.id2host[self._parent]
+
+            if self.low_bound < host_id < self.up_bound:
+                side = left if self._id < host_id else right
+                sock = self._opened_connection[side]
+            else:
+                sock = self._opened_connection[parent]
+            print('[*] Sending %s to %s\n' % (msg, str(sock.getpeername())))
+            sock.sendall(json.dumps(msg).encode() + END_OF_MESSAGE)
+            return True
+        except KeyError as e:
+            # TODO PROCESS THIS CASE CORRECTLY
+            return False
+        except socket.error as e:
+            # TODO PROCESS THIS CASE CORRECTLY
+            return False
 
     def connect(self, server_host):
         '''
@@ -172,7 +231,7 @@ class BinaryTreePeer(BasePeer):
         packet = json.loads(request)
 
         # All payload are placed in Handlers class
-        resp_packet = self._handlers[packet['type']].handle(packet)
+        resp_packet = self._handle_resp_by_type(packet)
         if resp_packet in [None, True, False]:
             resp_packet = ''
         return  json.dumps(resp_packet).encode() + END_OF_MESSAGE
