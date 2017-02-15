@@ -74,20 +74,34 @@ class BinaryTreePeer(BasePeer):
 
     def _greeting(self):
         '''
-        Make get_chat_info and find_insert_place requests to a server_host
+        Make get_chat_info and find_insert_place requests to a server_host:
 
-        First, it generates two packet. By one on each request.
-        Then gets generator and iterates through responses
+        1) Get chat information. Namely, list of connected hosts, their ids
+        and so on.
+        2) Fetch information about host that can process out connection to
+        the chat
         '''
 
-        get_chat_packet = self._get_chat_info(self._server_host)
-        find_place_packet = self._find_insert_place(self._server_host)
-        generator = self.__fetch_and_process_greet(get_chat_packet,
-                                                   find_place_packet)
+        packets_gen = [self._get_chat_info, self._find_insert_place]
+        requests = []
 
-        for response in generator:
-            self._handlers[response['type']].handle(response)
+        greet_gen = self._send_greet(self._server_host, requests)
+        for gen in packets_gen:
+            requests.append(gen(self._server_host))
+            resp = next(greet_gen)
+            self._handlers[resp['type']].handle(resp)
             self._wait_node_data()
+
+    def _get_chat_info(self, server_host):
+        ''' Generate get_chat_info request packet '''
+        return self._create_packet(TYPES['get_chat_info'], -1, -1,
+                                  self._host, server_host)
+
+    def _find_insert_place(self, server_host):
+        ''' Generate find_insert_place request packet '''
+        return self._create_packet(TYPES['find_insert_place'], self._id,
+                                   self.connected[server_host]['id'],
+                                   self._host, server_host)
 
     def _create_handlers(self):
         self._handlers = Handlers(self)
@@ -132,10 +146,10 @@ class BinaryTreePeer(BasePeer):
                                 handle our request for connection
         '''
 
-        print('[*] Connecting to: %s' % str(server_host))
-        packet = self._create_packet(TYPES['connect'], -1, -1, self._host,
-                                     server_host)
-        self.send_message(server_host, packet)
+        # print('[*] Connecting to: %s' % str(server_host))
+        # packet = self._create_packet(TYPES['connect'], -1, -1, self._host,
+        #                              server_host)
+        # self.send_message(server_host, packet)
 
     def disconnect(self):
         '''
@@ -143,39 +157,6 @@ class BinaryTreePeer(BasePeer):
         are disconnecting.
         '''
         pass
-
-    def __fetch_and_process_greet(self, get_info_packet, find_place_packet):
-        response = json.loads(self._send_greet(to_host, get_info_packet,
-                                               find_place_packet).decode())
-        return response
-
-    def _get_chat_info(self, server_host):
-        '''
-        Get chat information. Namely, list of connected hosts, their ids
-        and so on.
-        '''
-        return self._create_packet(TYPES['get_chat_info'], -1, -1,
-                                  self._host, server_host)
-
-    def _find_insert_place(self, server_host):
-        '''
-        Fetch information about host that can process out connection to
-        the chat
-        '''
-        return self._create_packet(TYPES['find_insert_place'], self._id,
-                                   self.connected[server_host]['id'],
-                                   self._host, server_host)
-
-    def _wait_node_data(self):
-        ''' Wait for assignment of id '''
-        while self._id is None:
-            pass
-
-    def generate_id(self, ids):
-        while True:
-            _id = randint(DOWN, UP)
-            if _id not in ids:
-                return _id
 
     def _process_request(self, request):
         '''
@@ -195,3 +176,14 @@ class BinaryTreePeer(BasePeer):
         if resp_packet in [None, True, False]:
             resp_packet = ''
         return  json.dumps(resp_packet).encode() + END_OF_MESSAGE
+
+    def _wait_node_data(self):
+        ''' Wait for assignment of id '''
+        while self._id is None:
+            pass
+
+    def generate_id(self, ids):
+        while True:
+            _id = randint(DOWN, UP)
+            if _id not in ids:
+                return _id

@@ -1,6 +1,7 @@
 # Own files
 test.py
 [0-9].py
+*.swp
 
 
 # Byte-compiled / optimized / DLL files

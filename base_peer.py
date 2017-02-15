@@ -113,12 +113,13 @@ class BasePeer:
                 return False
         try:
             send_sock = self._opened_connection[host]
+            print('[*] Sending %s to %s' % (msg, str(host)))
             send_sock.sendall(json.dumps(msg).encode())
             return True
         except (socket.error, KeyError) as e:
             return False
 
-    def _send_greet(self, host, get_info_msg, find_place_msg):
+    def _send_greet(self, host, requests):
         '''
         We want to get information about the chat then we should use
         temp socket to transfer message
@@ -130,11 +131,11 @@ class BasePeer:
         greet_sock = self._create_send_socket()
         greet_sock.connect(host)
 
-        for msg in [get_info_msg, find_place_msg]:
-            greet_sock.sendall(json.dumps(get_info_msg).encode() + END_OF_MESSAGE)
+        for msg in requests:
+            greet_sock.sendall(json.dumps(msg).encode() + END_OF_MESSAGE)
             # TODO CORRECT RECEIVING PART
-            data = greet_sock.recv(BUFFER_SIZE * 2)
-            print('[+] Received: %s from %s' % (data, data['from_host']))
+            data = json.loads(greet_sock.recv(BUFFER_SIZE * 2).decode())
+            print('[+] Received: %s from %s' % (data, str(data['from_host'])))
             yield data
         greet_sock.close()
 
@@ -194,7 +195,7 @@ class BasePeer:
 
         for sock in writable:
             next_msg = message_queues[sock]['data']
-            if next_msg in [b'', END_OF_MESSAGE]:
+            if next_msg in [b'""' + END_OF_MESSAGE, END_OF_MESSAGE, b'']:
                 print('[*] Output queue for {} is empty'
                             .format(str(sock.getpeername())))
                 outputs.remove(sock)

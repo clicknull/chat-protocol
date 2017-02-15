@@ -107,22 +107,37 @@ class Handlers:
 
         if (client_id and client_host) is None:
             client_id = rpacket['from_id']
-            client_host = rpacket['from_host']
+            client_host = tuple(rpacket['from_host'])
+        client = (client_id, client_host)
 
         # If node position in subtree of current machine
         if self._peer.low_bound < client_id < self._peer.up_bound:
             # if less than current node
+            resp = None
             if client_id < self._peer._id:
-                return self.__process_child('left', rpacket, relay)
+                resp = self.__process_child('left', rpacket, client, relay)
             else:
-                return self.__process_child('right', rpacket, relay)
+                resp = self.__process_child('right', rpacket, client, relay)
+            if resp[0]:
+                return resp if relay else resp[1]
         else:
             # Else in another subtree of parent
             if not relay:
                 self._make_relay(rpacket)
         return False
 
-    def __process_child(self, child_side, packet, relay=False):
+    def __process_child(self, child_side, packet, client, client_host,
+                        relay=False):
+        '''
+        Process childs of current node
+
+        Returns:
+            (tuple) First place is True if this host contains node for
+                    client else False. Second place is info about node place
+        '''
+        client_id = client[0]
+        client_host = client[1]
+
         if child_side == 'left':
             node = self._peer._left
             neighbor = self._peer._right
@@ -141,17 +156,16 @@ class Handlers:
                 self._peer._left = client_id
             else:
                 self._peer._right = client_id
-            packet = self.reverse_packet(TYPES['insert_place'])
+            packet = self._reverse_packet(packet, TYPES['insert_place'])
             packet['place_info'] = place_info
             print('[+] Finded node location: {} for {}'
-                  .format(place_info, place_info['from_host']))
-            self._peer.send_message(client_host, packet)
-            return True
+                  .format(place_info, str(packet['from_host'])))
+            return (True, packet)
         else:
             # Else we should relay it
             if not relay:
                 self._make_relay(packet)
-        return False
+        return (False,)
 
     def _make_relay(self, packet):
         packet['downtype'] = packet['type']
@@ -167,7 +181,7 @@ class Handlers:
                  'up_bound': up_bound,
                  'low_bound': low_bound }
 
-    def reverse_packet(self, packet, _type):
+    def _reverse_packet(self, packet, _type):
         return self._peer._create_packet(_type, packet['to_id'],
                                          packet['from_id'], packet['to_host'],
                                          packet['from_host'])
@@ -185,17 +199,16 @@ class Handlers:
             check_packet['type'] = check_packet['downtype']
             del check_packet['downtype']
 
+            resp = self._find_insert_place(rpacket, relay=True)
             # If current machine have node position for asking client
-            if self._find_insert_place(rpacket, relay=True):
-                self._insert_place(rpacket)
-                return
+            if resp[0]:
+                return resp[1]
 
         # If receiver is found
         if rpacket['to_host'] == self._peer._host:
             rpacket['type'] = rpacket['downtype']
             del rpacket['downtype']
-            self._table[rpacket['type']].handle(rpacket)
-            return
+            return self._table[rpacket['type']].handle(rpacket)
 
         to_id = rpacket['to_id']
         host = None
