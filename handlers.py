@@ -23,7 +23,8 @@ TYPES = {
     'find_insert_place': 'find_insert_place',
     'insert_place': 'insert_place',
     'downtype': 'downtype',
-    'connect_resp': 'connect_resp'
+    'connect_resp': 'connect_resp',
+    'new_user': 'new_user'
 }
 
 
@@ -50,7 +51,8 @@ class Handlers:
             TYPES['relay']: Handle(self._relay),
             TYPES['find_insert_place']: Handle(self._find_insert_place),
             TYPES['insert_place']: Handle(self._insert_place),
-            TYPES['connect_resp']: Handle(self._connect_resp)
+            TYPES['connect_resp']: Handle(self._connect_resp),
+            TYPES['new_user']: Handle(self._new_user)
         }
 
     def _connect(self, rpacket):
@@ -70,9 +72,7 @@ class Handlers:
             pass
         packet = self._reverse_packet(rpacket, 'connect_resp')
         if is_successful:
-            host = tuple(user_info['host'])
-            self._peer.connected[host] = user_info
-            print('[+] Added %s in connected hosts list\n' % str(host))
+            self._add_user_to_chat(user_info)
 
             packet['response'] = 'OK'
             packet['connected'] = self._get_connected()
@@ -82,9 +82,31 @@ class Handlers:
         del packet['place_info']
         return packet
 
+    def _add_user_to_chat(self, user_info):
+        user_info['host'] = tuple(user_info['host'])
+        user_info['id'] = int(user_info['id'])
+        host = user_info['host']
+
+        self._peer.connected[host] = user_info
+        self._peer.id2host[user_info['id']] = host
+
+        print('[+] Added %s to connected hosts list\n' % str(host))
+
     def _connect_resp(self, rpacket):
         ''' Empty function '''
         return rpacket
+
+    def _new_user(self, rpacket):
+        ''' Information about new user in the chat  '''
+        closed = { 'parent': [],
+                   'left':   [self._peer._right],
+                   'right':  [self._peer._left] }
+        side = rpacket['broadcast']['from_node_side']
+        user_info = rpacket['broadcast']['user_info']
+
+        self._add_user_to_chat(user_info)
+
+        self._peer.send_broadcast_message(rpacket, closed[side])
 
     def _disconnect(self, rpacket):
         pass
@@ -128,7 +150,7 @@ class Handlers:
             _id = host_data['id']
             username = host_data['username']
 
-            self._peer._add_host(host, {'id': _id, 'username': username})
+            self._peer._add_host(host, { 'id': _id, 'username': username })
             self._peer.id2host[_id] = host
 
             ids.add(_id)
@@ -140,7 +162,6 @@ class Handlers:
     def _find_insert_place(self, rpacket, client_id=None, client_host=None,
                            relay=False):
         ''' Find node in the chat's tree for connecting client '''
-
         if (client_id and client_host) is None:
             client_id = rpacket['from_id']
             client_host = tuple(rpacket['from_host'])
@@ -155,15 +176,16 @@ class Handlers:
             else:
                 resp = self.__process_child('right', rpacket, client, relay)
             if resp[0]:
+                if not relay:
+                    del self._peer._opened_connection[tuple(resp[1]['to_host'])]
                 return resp if relay else resp[1]
         else:
             # Else in another subtree of parent
             if not relay:
-                self._make_relay(rpacket)
-        return False
+                return self._make_relay(rpacket)
+        return (False,) if relay else False
 
-    def __process_child(self, child_side, packet, client, client_host,
-                        relay=False):
+    def __process_child(self, child_side, packet, client, relay=False):
         '''
         Process childs of current node
 
@@ -188,24 +210,26 @@ class Handlers:
         if node is None:
             place_info = self._form_place(child_side, neighbor,
                                           self._peer._host, up_bound, low_bound)
-            packet = self._reverse_packet(packet, TYPES['insert_place'])
+            packet = self._reverse_packet(packet, TYPES['insert_place'],
+                                          relay=relay)
             packet['place_info'] = place_info
-            print('[+] Finded node location: {} for {}\n'
+            print('[+] Found node location: {} for {}\n'
                   .format(place_info, str(packet['from_host'])))
             return (True, packet)
         else:
             # Else we should relay it
             if not relay:
-                self._make_relay(packet)
+                return self._make_relay(packet)
         return (False,)
 
     def _make_relay(self, packet):
-        packet['downtype'] = packet['type']
+        if 'downtype' not in packet:
+            packet['downtype'] = packet['type']
         packet['type'] = 'relay'
         packet['client_id'] = packet['from_id']
         packet['client_host'] = packet['from_host']
 
-        self._relay(packet)
+        return self._relay(packet, first_run=True)
 
     def _form_place(self, side, neighbor, conn_host, up_bound, low_bound):
         return { 'side': side,
@@ -214,10 +238,14 @@ class Handlers:
                  'up_bound': up_bound,
                  'low_bound': low_bound }
 
-    def _reverse_packet(self, packet, _type):
+    def _reverse_packet(self, packet, _type, relay=False):
         to_id = packet['to_id']
         to_host = packet['to_host']
-        packet['type'] = _type
+        if relay:
+            packet['type'] = 'relay'
+            packet['downtype'] = _type
+        else:
+            packet['type'] = _type
 
         packet['to_id'], packet['to_host'] = packet['from_id'], packet['from_host']
         packet['from_id'], packet['from_host'] = to_id, to_host
@@ -237,46 +265,70 @@ class Handlers:
         self._peer._neighbor = place_info['neighbor']
         self._peer._parent = self._peer.connected[parent]['id']
 
-    def _relay(self, rpacket):
+        # return rpacket
+
+
+    def _relay(self, rpacket, first_run=False):
         '''
-        Relay message to right direction
+        Relay message to the right direction
         '''
 
-        if rpacket['downtype'] == 'find_insert_place':
+        if not first_run and rpacket['downtype'] == 'find_insert_place':
             check_packet = copy.copy(rpacket)
             check_packet['type'] = check_packet['downtype']
             del check_packet['downtype']
 
-            resp = self._find_insert_place(rpacket, relay=True)
+            resp = self._find_insert_place(rpacket, rpacket['client_id'],
+                                           rpacket['client_host'], relay=True)
             # If current machine have node position for asking client
             if resp[0]:
                 return resp[1]
 
         # If receiver is found
-        if rpacket['to_host'] == self._peer._host:
+        if not first_run and tuple(rpacket['to_host']) == self._peer._host:
             rpacket['type'] = rpacket['downtype']
             del rpacket['downtype']
-            return self._table[rpacket['type']].handle(rpacket)
+            if rpacket['type'] == 'insert_place':
+                return self._insert_place_server_proc(rpacket)
+            else:
+                # TODO Not sure this will work
+                return self._table[rpacket['type']].handle(rpacket)
 
-        to_id = rpacket['to_id']
+        from_id = rpacket['from_id']
         host = None
         # Receiver in our subtree
-        if self._peer.low_bound < to_id < self._peer.up_bound:
-            if to_id < self._peer._id:
-                host = self._peer._left
+        if self._peer.low_bound < from_id < self._peer.up_bound:
+            if from_id < self._peer._id:
+                host_id = self._peer._left
             else:
-                host = self._peer._right
+                host_id = self._peer._right
         else:
-            host = self._peer._parent
+            host_id = self._peer._parent
+        host = self._peer.id2host[host_id]
 
         rpacket['from_host'] = self._peer._host
         rpacket['from_id'] = self._peer._id
         rpacket['to_host'] = host
-        rpacket['to_id'] = self._peer.connected[host]['id']
+        rpacket['to_id'] = host_id
 
         print('[*] Relaying packet {} to {}\n'
               .format(rpacket, rpacket['to_host']))
         self._peer.send_message(host, rpacket)
+        return (None,)
+
+    def _insert_place_server_proc(self, rpacket):
+        tmp = [['from_id', 'from_host'], ['to_id', 'to_host'],
+               ['client_id', 'client_host']]
+        for field in range(2):
+            for _set in range(len(tmp) - 1):
+                rpacket[tmp[_set][field]] = rpacket[tmp[_set + 1][field]]
+        for _ in range(2):
+            del rpacket[tmp[-1][_]]
+        host = tuple(rpacket['to_host'])
+        sock = self._peer._send_temp_message(host, rpacket)
+        self._peer._inputs.remove(sock)
+        sock.close()
+        del self._peer._opened_connection[host]
 
 
 class Handle:

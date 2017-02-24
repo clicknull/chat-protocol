@@ -7,6 +7,7 @@ structured peer-to-peer network
 import socket
 import logging
 import json
+import traceback
 
 from base_peer import BasePeer, END_OF_MESSAGE
 from handlers import Handlers, TYPES
@@ -55,10 +56,12 @@ class BinaryTreePeer(BasePeer):
         self.connected[host] = data
 
     def _get_self_data(self):
-        return {'id': self._id, 'username': ''}
+        return {'id': self._id, 'host': self._host, 'username': ''}
 
     def start(self):
         ''' Start peer's works and processing data '''
+
+        self._add_work(self._handle_recv)
 
         # If we want to connect to existed chat
         if self._server_host is not None:
@@ -69,7 +72,6 @@ class BinaryTreePeer(BasePeer):
             self._is_root = True
             # TODO ADD USERNAME
             self._add_host(self._host, self._get_self_data())
-        self._add_work(self._handle_recv)
 
     def _form_broadcast_field(self, side):
         return {'side': side}
@@ -118,6 +120,8 @@ class BinaryTreePeer(BasePeer):
             else:
                 print('[+] Connection with %s is established'
                       % str(server_host))
+                self._inputs.append(sock)
+                self._message_queues[sock] = {'out': False, 'data': b''}
                 self._handlers['chat_info'].handle(resp)
                 break
 
@@ -130,16 +134,19 @@ class BinaryTreePeer(BasePeer):
 
     def _inform_about_connected(self, host):
         ''' Inform other clients of chat that user was connected '''
-        pass
+        packet = self._create_packet('new_user', self._id, -1,
+                                     self._host, -1, broadcast=True)
+        packet['broadcast']['user_info'] = self._get_self_data()
+        self.send_broadcast_message(packet)
 
     def __fetch_and_process_greet(self, packet, server_host, print_msg,
                                   sock=None):
-            if sock is None:
-                sock = self._create_send_socket()
-                sock.connect(server_host)
-            print(print_msg)
-            sock.sendall(json.dumps(packet).encode() + END_OF_MESSAGE)
-            return self.__process_resp_sock(sock)
+        if sock is None:
+            sock = self._create_send_socket()
+            sock.connect(server_host)
+        print(print_msg)
+        sock.sendall(json.dumps(packet).encode() + END_OF_MESSAGE)
+        return self.__process_resp_sock(sock)
 
     def __process_resp_sock(self, sock):
         resp = self._get_response(sock)
@@ -178,7 +185,7 @@ class BinaryTreePeer(BasePeer):
         self._handlers = Handlers(self)
 
     def _create_packet(self, _type, from_id, to_id, from_host, to_host,
-                       broadcast=None, connect=False):
+                       broadcast=False, connect=False):
         '''
         Form a chat packet.
 
@@ -205,7 +212,7 @@ class BinaryTreePeer(BasePeer):
             'to_host': to_host
         }
         if broadcast:
-            packet['broadcast'] = broadcast
+            packet['broadcast'] = {'from_node': None}
         if connect:
             packet['place_info'] = self._place_info
             packet['user_info'] = {'id': self._id, 'host': self._host,
@@ -227,38 +234,55 @@ class BinaryTreePeer(BasePeer):
         try:
             host_id = self.connected[host]['id']
 
-            left = self.id2host[self._left]
-            right = self.id2host[self._right]
-            parent = self.id2host[self._parent]
+            left = self.id2host.get(self._left, None)
+            right = self.id2host.get(self._right, None)
+            parent = self.id2host.get(self._parent, None)
 
             if self.low_bound < host_id < self.up_bound:
-                side = left if self._id < host_id else right
+                side = left if self._id > host_id else right
                 sock = self._opened_connection[side]
             else:
                 sock = self._opened_connection[parent]
-            print('[*] Sending %s to %s\n' % (msg, str(sock.getpeername())))
-            sock.sendall(json.dumps(msg).encode() + END_OF_MESSAGE)
+            self._add_message2send(sock, json.dumps(msg).encode() + END_OF_MESSAGE)
             return True
         except KeyError as e:
             # TODO PROCESS THIS CASE CORRECTLY
+            traceback.print_exc()
             return False
         except socket.error as e:
             # TODO PROCESS THIS CASE CORRECTLY
+            traceback.print_exc()
             return False
 
-    def _process_request(self, request):
+    def send_broadcast_message(self, msg, closed=[]):
+        ''' Broadcast transfering of message '''
+        neighbors = [self._left, self._right, self._parent]
+        locations = ['partent', 'parent', self._side]
+
+        for host_id, side in zip(neighbors, locations):
+            if host_id in closed or host_id is None:
+                continue
+            host = self.id2host[host_id]
+            msg['to_id'] = host_id
+            msg['to_host'] = host
+            msg['broadcast']['from_node_side'] = side
+            print('[*] Sending broadcast message\n')
+            self.send_message(host, msg)
+
+    def _process_request(self, request, loaded=False):
         '''
         Process request from another client. First of all we
         should decrypt message via encryptor.
 
         Args:
             request (string) Request from some client in the chat
+            loaded (bool) If request is json loaded
         Return:
             (bytes) Response to request
         '''
-
-        packet = json.loads(request)
-
+        packet = request
+        if not loaded:
+            packet = json.loads(request)
         # All payload are placed in Handlers class
         resp_packet = self._handle_resp_by_type(packet)
         if resp_packet in [None, True, False]:
@@ -274,4 +298,5 @@ class BinaryTreePeer(BasePeer):
         while True:
             _id = randint(DOWN, UP)
             if _id not in ids:
+                self.id2host[_id] = self._host
                 return _id

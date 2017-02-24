@@ -49,6 +49,7 @@ class BasePeer:
         self._init_threading_data()
 
         self._host = (self._fetch_IP_address(), port)
+        print(self._host)
 
     def _init_threading_data(self):
         self._inner_workers = {}
@@ -61,11 +62,11 @@ class BasePeer:
         self._inner_workers[work.__name__] = thread
         thread.start()
 
-    def _create_send_socket(self):
+    def _create_send_socket(self, timeout=2):
         ''' Create socket for sending messages '''
 
         send = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        send.settimeout(2)
+        send.settimeout(timeout)
         return send
 
     def _create_recv_socket(self):
@@ -79,12 +80,12 @@ class BasePeer:
         return recv
 
     def _send_temp_message(self, host, msg):
-        '''
-        Used when happens greeting
-        '''
+        ''' Used when happens greeting '''
+        # print('TEST MESSAGE')
         if host not in self._opened_connection:
-            self._open_connection(host)
+            self._open_connection(host, 10)
         sock = self._opened_connection[host]
+        print('[+] Sending {} to {}'.format(repr(msg), str(host)))
         sock.sendall(json.dumps(msg).encode() + END_OF_MESSAGE)
         return sock
 
@@ -92,7 +93,7 @@ class BasePeer:
         self._opened_connection[host].close()
         del self._opened_connection[host]
 
-    def _open_connection(self, host):
+    def _open_connection(self, host, timeout=2):
         '''
         Open connection with a host
 
@@ -103,7 +104,7 @@ class BasePeer:
         '''
 
         try:
-            send_sock = self._create_send_socket()
+            send_sock = self._create_send_socket(timeout)
             send_sock.connect(host)
             self._opened_connection[host] = send_sock
             return True
@@ -122,12 +123,21 @@ class BasePeer:
         print('[+] Received: %s from %s\n' % (data, str(data['from_host'])))
         return data
 
+    def _add_message2send(self, sock, msg):
+        if sock not in self._outputs:
+            self._outputs.append(sock)
+        self._message_queues[sock] = {'out': True, 'data': msg}
+
     def _handle_recv(self):
         ''' Non-blocking handling of received data '''
 
         inputs = [self._recv_sock]
         outputs = []
         message_queues = {}
+
+        self._inputs = inputs
+        self._outputs = outputs
+        self._message_queues = message_queues
 
         while self._is_handle_recv:
             print('\n[*] Waiting for the next event')
@@ -148,7 +158,6 @@ class BasePeer:
                 conn.setblocking(0)
                 inputs.append(conn)
                 message_queues[conn] = {'out': False, 'data': b''}
-                self._opened_connection[addr] = conn
             else:
                 data = sock.recv(BUFFER_SIZE)
                 if data:
@@ -160,7 +169,9 @@ class BasePeer:
                     if END_OF_MESSAGE in data:
                         message_queues[sock]['out'] = True
                         req = message_queues[sock]['data'].decode('utf-8')
-                        message_queues[sock]['data'] = self._process_request(req)
+                        packet = self._update_opened_connection(req, sock)
+                        message_queues[sock]['data'] = self._process_request(packet,
+                                                                             True)
                 else:
                     print('[+] Closing {} after reading no data'
                                 .format(str(sock.getpeername())))
@@ -168,7 +179,6 @@ class BasePeer:
                         outputs.remove(sock)
 
                     inputs.remove(sock)
-                    del self._opened_connection[sock.getpeername()]
                     sock.close()
 
                     del message_queues[sock]
@@ -177,7 +187,10 @@ class BasePeer:
         ''' Process sockets that ready for writing '''
 
         for sock in writable:
-            next_msg = message_queues[sock]['data']
+            try:
+                next_msg = message_queues[sock]['data']
+            except KeyError:
+                return
             if next_msg in [b'""' + END_OF_MESSAGE, END_OF_MESSAGE, b'']:
                 print('[*] Output queue for {} is empty'
                             .format(str(sock.getpeername())))
@@ -186,10 +199,19 @@ class BasePeer:
                 if message_queues[sock]['out']:
                     message_queues[sock]['data'] = b''
                     message_queues[sock]['out'] = False
-                    print('[*] Sending {} to {}'
-                                .format(repr(next_msg.decode()),
-                                        str(sock.getpeername())))
-                    sock.send(next_msg)
+                    print('[+] Sending {} to {}'
+                          .format(repr(next_msg.decode()),
+                                  str(sock.getpeername())))
+                    sock.sendall(next_msg)
+
+    def _update_opened_connection(self, req, sock):
+        packet = json.loads(req)
+        _type = packet['type']
+        from_host = tuple(packet['from_host'])
+        is_host_in = from_host not in self._opened_connection
+        if is_host_in and _type in ['connect', 'find_insert_place']:
+            self._opened_connection[from_host] = sock
+        return packet
 
     def _fetch_IP_address(self):
         os_name = os.name
