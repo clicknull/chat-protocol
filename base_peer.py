@@ -147,6 +147,7 @@ class BasePeer:
                                         message_queues, readable)
             self._process_writable_sock(inputs, outputs,
                                         message_queues, writable)
+            # TODO PROCESS ERRORS WITH SOCKETS
 
     def _process_readable_sock(self, inputs, outputs, message_queues, readable):
         ''' Process sockets that ready for reading '''
@@ -162,26 +163,28 @@ class BasePeer:
                 data = sock.recv(BUFFER_SIZE)
                 if data:
                     print('[+] Received {} from {}'
-                                .format(repr(data.decode()), str(sock.getpeername())))
+                            .format(repr(data.decode()), str(sock.getpeername())))
                     message_queues[sock]['data'] += data
                     if sock not in outputs:
                         outputs.append(sock)
                     if END_OF_MESSAGE in data:
                         message_queues[sock]['out'] = True
-                        req = message_queues[sock]['data'].decode('utf-8')
+                        req = message_queues[sock]['data'].decode()
                         packet = self._update_opened_connection(req, sock)
-                        message_queues[sock]['data'] = self._process_request(packet,
-                                                                             True)
+                        message_queues[sock]['data'] = self._process_request(packet, True)
                 else:
-                    print('[+] Closing {} after reading no data'
-                                .format(str(sock.getpeername())))
-                    if sock in outputs:
-                        outputs.remove(sock)
+                    self._close_sock(sock)
 
-                    inputs.remove(sock)
-                    sock.close()
+    def _close_sock(self, sock):
+        print('[+] Closing {} after reading no data'
+              .format(str(sock.getpeername())))
+        if sock in self._outputs:
+            self._outputs.remove(sock)
 
-                    del message_queues[sock]
+        self._inputs.remove(sock)
+        sock.close()
+
+        del self._message_queues[sock]
 
     def _process_writable_sock(self, inputs, outputs, message_queues, writable):
         ''' Process sockets that ready for writing '''
@@ -193,8 +196,9 @@ class BasePeer:
                 return
             if next_msg in [b'""' + END_OF_MESSAGE, END_OF_MESSAGE, b'']:
                 print('[*] Output queue for {} is empty'
-                            .format(str(sock.getpeername())))
+                      .format(str(sock.getpeername())))
                 outputs.remove(sock)
+                message_queues[sock]['data'] = b''
             else:
                 if message_queues[sock]['out']:
                     message_queues[sock]['data'] = b''

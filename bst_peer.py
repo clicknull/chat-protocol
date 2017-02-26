@@ -67,6 +67,7 @@ class BinaryTreePeer(BasePeer):
         if self._server_host is not None:
             self._greeting()
             self.connect(self._parent)
+            self._inform_about_connected()
         else:
             self._id = self.generate_id([])
             self._is_root = True
@@ -132,7 +133,7 @@ class BinaryTreePeer(BasePeer):
         '''
         pass
 
-    def _inform_about_connected(self, host):
+    def _inform_about_connected(self):
         ''' Inform other clients of chat that user was connected '''
         packet = self._create_packet('new_user', self._id, -1,
                                      self._host, -1, broadcast=True)
@@ -212,7 +213,7 @@ class BinaryTreePeer(BasePeer):
             'to_host': to_host
         }
         if broadcast:
-            packet['broadcast'] = {'from_node': None}
+            packet['broadcast'] = {}
         if connect:
             packet['place_info'] = self._place_info
             packet['user_info'] = {'id': self._id, 'host': self._host,
@@ -243,6 +244,7 @@ class BinaryTreePeer(BasePeer):
                 sock = self._opened_connection[side]
             else:
                 sock = self._opened_connection[parent]
+            print()
             self._add_message2send(sock, json.dumps(msg).encode() + END_OF_MESSAGE)
             return True
         except KeyError as e:
@@ -257,7 +259,7 @@ class BinaryTreePeer(BasePeer):
     def send_broadcast_message(self, msg, closed=[]):
         ''' Broadcast transfering of message '''
         neighbors = [self._left, self._right, self._parent]
-        locations = ['partent', 'parent', self._side]
+        locations = ['parent', 'parent', self._side]
 
         for host_id, side in zip(neighbors, locations):
             if host_id in closed or host_id is None:
@@ -266,7 +268,7 @@ class BinaryTreePeer(BasePeer):
             msg['to_id'] = host_id
             msg['to_host'] = host
             msg['broadcast']['from_node_side'] = side
-            print('[*] Sending broadcast message\n')
+            print('[*] Sending broadcast message to %s\n' % host_id)
             self.send_message(host, msg)
 
     def _process_request(self, request, loaded=False):
@@ -281,12 +283,15 @@ class BinaryTreePeer(BasePeer):
             (bytes) Response to request
         '''
         packet = request
+
         if not loaded:
             packet = json.loads(request)
+
         # All payload are placed in Handlers class
         resp_packet = self._handle_resp_by_type(packet)
         if resp_packet in [None, True, False]:
             resp_packet = ''
+
         return  json.dumps(resp_packet).encode() + END_OF_MESSAGE
 
     def _wait_node_data(self):

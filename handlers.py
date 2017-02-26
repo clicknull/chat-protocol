@@ -91,6 +91,7 @@ class Handlers:
         self._peer.id2host[user_info['id']] = host
 
         print('[+] Added %s to connected hosts list\n' % str(host))
+        print('[*] Now connected hosts are %s\n' % str(self._peer.connected.keys()))
 
     def _connect_resp(self, rpacket):
         ''' Empty function '''
@@ -98,15 +99,15 @@ class Handlers:
 
     def _new_user(self, rpacket):
         ''' Information about new user in the chat  '''
-        closed = { 'parent': [],
-                   'left':   [self._peer._right],
-                   'right':  [self._peer._left] }
+        closed = { 'parent': [self._peer._parent],
+                   'left':   [self._peer._left],
+                   'right':  [self._peer._right] }
         side = rpacket['broadcast']['from_node_side']
         user_info = rpacket['broadcast']['user_info']
 
         self._add_user_to_chat(user_info)
 
-        self._peer.send_broadcast_message(rpacket, closed[side])
+        self._peer.send_broadcast_message(rpacket, closed=closed[side])
 
     def _disconnect(self, rpacket):
         pass
