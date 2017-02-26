@@ -16,6 +16,7 @@ import threading
 import netifaces as nf
 import json
 import traceback
+import queue
 
 from queue import Queue
 
@@ -126,17 +127,25 @@ class BasePeer:
     def _add_message2send(self, sock, msg):
         if sock not in self._outputs:
             self._outputs.append(sock)
-        self._message_queues[sock] = {'out': True, 'data': msg}
+        self._message_queues[sock].put(msg)
+
+    def _accept_conn(self, sock):
+        sock.setblocking(0)
+        self._inputs.append(sock)
+        self._message_data[sock] = b''
+        self._message_queues[sock] = Queue()
 
     def _handle_recv(self):
         ''' Non-blocking handling of received data '''
 
         inputs = [self._recv_sock]
         outputs = []
+        message_data = {}
         message_queues = {}
 
         self._inputs = inputs
         self._outputs = outputs
+        self._message_data = message_data
         self._message_queues = message_queues
 
         while self._is_handle_recv:
@@ -144,34 +153,33 @@ class BasePeer:
             readable, writable, exceptional = select.select(inputs, outputs,
                                                             inputs, 2)
             self._process_readable_sock(inputs, outputs,
-                                        message_queues, readable)
+                                        message_data, readable)
             self._process_writable_sock(inputs, outputs,
-                                        message_queues, writable)
+                                        message_data, writable)
             # TODO PROCESS ERRORS WITH SOCKETS
 
-    def _process_readable_sock(self, inputs, outputs, message_queues, readable):
+    def _process_readable_sock(self, inputs, outputs, message_data, readable):
         ''' Process sockets that ready for reading '''
 
         for sock in readable:
             if sock is self._recv_sock:
                 conn, addr = sock.accept()
                 print('[*] New connection from %s' % str(addr))
-                conn.setblocking(0)
-                inputs.append(conn)
-                message_queues[conn] = {'out': False, 'data': b''}
+                self._accept_conn(conn)
             else:
                 data = sock.recv(BUFFER_SIZE)
                 if data:
                     print('[+] Received {} from {}'
-                            .format(repr(data.decode()), str(sock.getpeername())))
-                    message_queues[sock]['data'] += data
-                    if sock not in outputs:
-                        outputs.append(sock)
+                          .format(repr(data.decode()), str(sock.getpeername())))
+                    message_data[sock] += data
                     if END_OF_MESSAGE in data:
-                        message_queues[sock]['out'] = True
-                        req = message_queues[sock]['data'].decode()
+                        if sock not in outputs:
+                            outputs.append(sock)
+                        req = message_data[sock].decode()
+                        message_data[sock] = b''
+
                         packet = self._update_opened_connection(req, sock)
-                        message_queues[sock]['data'] = self._process_request(packet, True)
+                        self._message_queues[sock].put(self._process_request(packet, True))
                 else:
                     self._close_sock(sock)
 
@@ -184,29 +192,26 @@ class BasePeer:
         self._inputs.remove(sock)
         sock.close()
 
+        del self._message_data[sock]
         del self._message_queues[sock]
 
-    def _process_writable_sock(self, inputs, outputs, message_queues, writable):
+    def _process_writable_sock(self, inputs, outputs, message_data, writable):
         ''' Process sockets that ready for writing '''
 
         for sock in writable:
             try:
-                next_msg = message_queues[sock]['data']
-            except KeyError:
-                return
-            if next_msg in [b'""' + END_OF_MESSAGE, END_OF_MESSAGE, b'']:
+                next_msg = self._message_queues[sock].get_nowait()
+            except queue.Empty:
                 print('[*] Output queue for {} is empty'
                       .format(str(sock.getpeername())))
                 outputs.remove(sock)
-                message_queues[sock]['data'] = b''
             else:
-                if message_queues[sock]['out']:
-                    message_queues[sock]['data'] = b''
-                    message_queues[sock]['out'] = False
-                    print('[+] Sending {} to {}'
-                          .format(repr(next_msg.decode()),
-                                  str(sock.getpeername())))
-                    sock.sendall(next_msg)
+                if next_msg == b'""' + END_OF_MESSAGE:
+                    continue
+                print('[+] Sending {} to {}'
+                      .format(repr(next_msg.decode()),
+                              str(sock.getpeername())))
+                sock.sendall(next_msg)
 
     def _update_opened_connection(self, req, sock):
         packet = json.loads(req)

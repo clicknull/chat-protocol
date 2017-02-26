@@ -121,8 +121,7 @@ class BinaryTreePeer(BasePeer):
             else:
                 print('[+] Connection with %s is established'
                       % str(server_host))
-                self._inputs.append(sock)
-                self._message_queues[sock] = {'out': False, 'data': b''}
+                self._accept_conn(sock)
                 self._handlers['chat_info'].handle(resp)
                 break
 
@@ -244,7 +243,6 @@ class BinaryTreePeer(BasePeer):
                 sock = self._opened_connection[side]
             else:
                 sock = self._opened_connection[parent]
-            print()
             self._add_message2send(sock, json.dumps(msg).encode() + END_OF_MESSAGE)
             return True
         except KeyError as e:
